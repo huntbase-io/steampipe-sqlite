@@ -45,3 +45,7 @@ jobs:
       - name: Check binary is created
         run: |
           ls -l steampipe_sqlite_chaos.so
+
+      - name: Several filters on one cursor return every row
+        run: |
+          python3 scripts/test_refilter.py ./steampipe_sqlite_chaos.so
