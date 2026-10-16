@@ -54,9 +54,15 @@ trap 'rm -rf "$work"' EXIT
 rsync -a --exclude='.git' --exclude='work' --exclude='*.so' "$src_tree/" "$work/src/"
 src="$work/src"
 
-info="$(python3 - "$build_version" "$name" "$version" "$sdk" "$src_ref" "$org" <<'PY'
+# Features the source tree carries, for the executor to check at runtime.
+features=""
+if grep -q 'steampipe_connections_' "$src/register.go"; then
+  features="multi_connection"  # named connections + declared tables (turbot/steampipe-sqlite#98)
+fi
+
+info="$(python3 - "$build_version" "$name" "$version" "$sdk" "$src_ref" "$org" "$features" <<'PY'
 import json, sys
-build, plugin, version, sdk, ref, org = sys.argv[1:]
+build, plugin, version, sdk, ref, org, features = sys.argv[1:]
 print(json.dumps({
     "build": build,
     "plugin": plugin,
@@ -65,6 +71,7 @@ print(json.dumps({
     "sdk": sdk,
     "steampipe_sqlite": f"huntbase-io/steampipe-sqlite@{ref}",
     "fixes": ["refilter"],
+    **({"features": features.split(",")} if features else {}),
 }, separators=(",", ":")))
 PY
 )"

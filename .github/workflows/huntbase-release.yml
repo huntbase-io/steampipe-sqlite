@@ -114,6 +114,7 @@ jobs:
           huntbase/build.sh chaos@v2.0.3 dist
           tar -xzf dist/steampipe_sqlite_chaos.linux_amd64.tar.gz
           python3 scripts/test_refilter.py ./steampipe_sqlite_chaos.so
+          python3 scripts/test_multi_connection.py ./steampipe_sqlite_chaos.so
 
   publish:
     name: Publish release

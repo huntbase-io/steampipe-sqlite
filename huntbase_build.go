@@ -14,6 +14,9 @@ import (
 // huntbaseBuildInfo is JSON, e.g.
 // {"build":"r1","plugin":"whois","plugin_version":"v1.2.0","sdk":"v5","steampipe_sqlite":"51d39d2c","fixes":["refilter"]}
 // "refilter" means each xFilter call gets a fresh row stream (hb-backend#2573).
+// "features":["multi_connection"] means steampipe_configure_<plugin>('<name>', config)
+// and declared tables (create virtual table t using <table>(connection='<name>'))
+// are supported (turbot/steampipe-sqlite#98). Older builds have no "features".
 const huntbaseBuildInfo = `__HUNTBASE_BUILD_INFO__`
 
 type huntbaseBuildFn struct{}
