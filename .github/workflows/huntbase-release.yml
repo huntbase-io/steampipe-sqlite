@@ -1,0 +1,144 @@
+name: Huntbase release
+
+# Builds steampipe_sqlite_<plugin>.so (linux/amd64) for every plugin pinned in
+# huntbase/plugins.txt, with this fork's cursor fix, and on a huntbase-r* tag
+# publishes them as release assets with SHA256SUMS and manifest.json.
+#   SDK v6 plugins: this commit.  SDK v5 plugins: the huntbase-sdk-v5 commit in huntbase/V5_REF.
+
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - 'huntbase-r*'
+  pull_request:
+    branches:
+      - huntbase
+  workflow_dispatch:
+
+concurrency:
+  group: huntbase-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      specs: ${{ steps.plan.outputs.specs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - id: plan
+        run: |
+          specs=$(grep -vE '^[[:space:]]*(#|$)' huntbase/plugins.txt | sed 's/[[:space:]]*$//' \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          if jq -e '.[] | select(contains("@") | not)' <<<"$specs" >/dev/null; then
+            echo "::error::every huntbase/plugins.txt entry needs @version"; exit 1
+          fi
+          echo "specs=$specs" >> "$GITHUB_OUTPUT"
+          echo "$(jq length <<<"$specs") plugins"
+
+  build:
+    name: Build ${{ matrix.spec }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        spec: ${{ fromJson(needs.plan.outputs.specs) }}
+    steps:
+      - name: Checkout (SDK v6 tree)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          path: src-v6
+      - name: Read V5_REF
+        id: v5
+        run: echo "ref=$(tr -d '[:space:]' < src-v6/huntbase/V5_REF)" >> "$GITHUB_OUTPUT"
+      - name: Checkout (SDK v5 tree)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ steps.v5.outputs.ref }}
+          path: src-v5
+      # aws, azure and azuread fill a standard runner's disk and memory.
+      - name: Free disk space and add swap
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+          sudo fallocate -l 8G /swapfile2 && sudo chmod 600 /swapfile2
+          sudo mkswap /swapfile2 >/dev/null && sudo swapon /swapfile2
+          df -h / && free -g
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Build
+        env:
+          SPEC: ${{ matrix.spec }}
+          SRC_V5: ${{ github.workspace }}/src-v5
+          SRC_V6: ${{ github.workspace }}/src-v6
+        run: src-v6/huntbase/build.sh "$SPEC" dist
+      - name: Artifact name
+        id: name
+        env:
+          SPEC: ${{ matrix.spec }}
+        run: |
+          name="${SPEC%@*}"
+          echo "name=${name##*/}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: steampipe-sqlite-${{ steps.name.outputs.name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  regression:
+    name: Regression test (chaos plugin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Build chaos and check several filters on one cursor
+        run: |
+          huntbase/build.sh chaos@v2.0.3 dist
+          tar -xzf dist/steampipe_sqlite_chaos.linux_amd64.tar.gz
+          python3 scripts/test_refilter.py ./steampipe_sqlite_chaos.so
+
+  publish:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/huntbase-r')
+    needs: [build, regression]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          pattern: steampipe-sqlite-*
+          path: dist
+          merge-multiple: true
+      - name: Manifest and checksums
+        run: |
+          cd dist
+          jq -s 'map({(.plugin): .}) | add | {plugins: .}' steampipe_sqlite_*.json > manifest.json
+          sha256sum *.tar.gz manifest.json > SHA256SUMS
+          jq '.plugins | length' manifest.json
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/*.tar.gz dist/manifest.json dist/SHA256SUMS \
+            -R "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
+            --notes "steampipe SQLite extensions (linux/amd64) for the plugins in huntbase/plugins.txt, built with this fork's cursor fix (fresh row stream per xFilter). Verify with SHA256SUMS."
