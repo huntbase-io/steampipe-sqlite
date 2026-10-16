@@ -1,9 +1,17 @@
 name: Huntbase release
 
 # Builds steampipe_sqlite_<plugin>.so (linux/amd64) for every plugin pinned in
-# huntbase/plugins.txt, with this fork's cursor fix, and on a huntbase-r* tag
-# publishes them as release assets with SHA256SUMS and manifest.json.
+# huntbase/plugins.txt, with this fork's cursor fix, smoke-tests the exact
+# archives (huntbase/smoke_test.py), and only then publishes them as release
+# huntbase-<BUILD_VERSION> with SHA256SUMS and manifest.json.
 #   SDK v6 plugins: this commit.  SDK v5 plugins: the huntbase-sdk-v5 commit in huntbase/V5_REF.
+#
+# Releases come from:
+#   - a merge to `huntbase` that changes huntbase/BUILD_VERSION (the weekly
+#     plugin-update PR bumps it): tag huntbase-<BUILD_VERSION> is created here;
+#   - pushing a tag huntbase-<BUILD_VERSION>, or huntbase-<BUILD_VERSION>-<suffix>
+#     for a test (published as a prerelease, which the rollout ignores).
+# hb-backend's steampipe-rollout workflow picks up each new full release. See huntbase/ROLLOUT.md.
 
 permissions:
   contents: read
@@ -12,6 +20,10 @@ on:
   push:
     tags:
       - 'huntbase-r*'
+    branches:
+      - huntbase
+    paths:
+      - 'huntbase/BUILD_VERSION'
   pull_request:
     branches:
       - dev
@@ -27,10 +39,40 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       specs: ${{ steps.plan.outputs.specs }}
+      build: ${{ steps.release.outputs.build }}
+      tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+      - id: release
+        name: Release to publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          build=$(tr -d '[:space:]' < huntbase/BUILD_VERSION)
+          [[ "$build" =~ ^r[0-9]+$ ]] || { echo "::error::huntbase/BUILD_VERSION is '$build', want rN"; exit 1; }
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          tag=""; prerelease=false
+          if [[ "$EVENT" == push && "$REF_TYPE" == tag ]]; then
+            tag="$REF_NAME"
+            if [[ "$tag" == "huntbase-$build" ]]; then :
+            elif [[ "$tag" == "huntbase-$build-"* ]]; then prerelease=true
+            else echo "::error::tag $tag doesn't match huntbase/BUILD_VERSION ($build)"; exit 1; fi
+          elif [[ "$EVENT" == push ]]; then
+            tag="huntbase-$build"
+            if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+               || gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+              echo "::error::$tag already exists. Releases are immutable: bump huntbase/BUILD_VERSION."; exit 1
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "build $build; publish: ${tag:-no}${tag:+ (prerelease: $prerelease)}"
       - id: plan
         run: |
           specs=$(grep -vE '^[[:space:]]*(#|$)' huntbase/plugins.txt | sed 's/[[:space:]]*$//' \
@@ -115,14 +157,15 @@ jobs:
           tar -xzf dist/steampipe_sqlite_chaos.linux_amd64.tar.gz
           python3 scripts/test_refilter.py ./steampipe_sqlite_chaos.so
 
-  publish:
-    name: Publish release
-    if: startsWith(github.ref, 'refs/tags/huntbase-r')
-    needs: [build, regression]
+  smoke:
+    name: Smoke test the release assets
+    needs: [plan, build, regression]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 30
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
         with:
           pattern: steampipe-sqlite-*
@@ -134,11 +177,67 @@ jobs:
           jq -s 'map({(.plugin): .}) | add | {plugins: .}' steampipe_sqlite_*.json > manifest.json
           sha256sum *.tar.gz manifest.json > SHA256SUMS
           jq '.plugins | length' manifest.json
+      - name: Smoke test
+        env:
+          BUILD: ${{ needs.plan.outputs.build }}
+          LABEL: ${{ needs.plan.outputs.tag || format('build {0} ({1})', needs.plan.outputs.build, github.sha) }}
+        run: |
+          python3 -I huntbase/smoke_test.py dist --plugins huntbase/plugins.txt --build "$BUILD" \
+            --label "$LABEL" --report smoke-test.json --markdown smoke-test.md
+      - name: Summary
+        if: always()
+        run: test -f smoke-test.md && cat smoke-test.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: release-meta
+          path: |
+            dist/manifest.json
+            dist/SHA256SUMS
+            smoke-test.json
+            smoke-test.md
+          if-no-files-found: ignore
+          retention-days: 30
+
+  publish:
+    name: Publish ${{ needs.plan.outputs.tag }}
+    if: needs.plan.outputs.tag != ''
+    needs: [plan, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          pattern: steampipe-sqlite-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          name: release-meta
+          path: meta
+      - name: Same bytes the smoke test passed
+        run: |
+          cp meta/dist/manifest.json meta/dist/SHA256SUMS dist/
+          cd dist && sha256sum --strict -c SHA256SUMS
+          [[ $(ls *.tar.gz | wc -l) == $(grep -c '\.tar\.gz$' SHA256SUMS) ]]
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
         run: |
-          gh release create "$TAG" dist/*.tar.gz dist/manifest.json dist/SHA256SUMS \
-            -R "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" \
-            --notes "steampipe SQLite extensions (linux/amd64) for the plugins in huntbase/plugins.txt, built with this fork's cursor fix (fresh row stream per xFilter). Verify with SHA256SUMS."
+          {
+            echo "steampipe SQLite extensions (linux/amd64) for the plugins in huntbase/plugins.txt, built with this fork's cursor fix (fresh row stream per xFilter). Verify with SHA256SUMS."
+            echo
+            cat meta/smoke-test.md
+          } > notes.md
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            target=(--verify-tag)
+          else
+            target=(--target "$GITHUB_SHA")
+          fi
+          flags=()
+          [[ "$PRERELEASE" == true ]] && flags+=(--prerelease --latest=false)
+          gh release create "$TAG" dist/*.tar.gz dist/manifest.json dist/SHA256SUMS meta/smoke-test.json \
+            -R "$GITHUB_REPOSITORY" "${target[@]}" "${flags[@]}" --title "$TAG" --notes-file notes.md
