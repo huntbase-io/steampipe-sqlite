@@ -25,6 +25,10 @@ func register() {
 		if err := api.CreateFunction(fnName, configureFn); err != nil {
 			return sqlite.SQLITE_ERROR, err
 		}
+		connectionsFnName := strings.ToLower(fmt.Sprintf("steampipe_connections_%s", pluginAlias))
+		if err := api.CreateFunction(connectionsFnName, ConnectionsFn{}); err != nil {
+			return sqlite.SQLITE_ERROR, err
+		}
 
 		// Huntbase: report which build (and which fixes) this extension carries.
 		if err := registerHuntbaseBuildFn(api); err != nil {
@@ -45,6 +49,7 @@ func register() {
 				return sqlite.SQLITE_ERROR, err
 			}
 			currentSchema = schema
+			connections.set(defaultConnectionName(), schema)
 		}
 
 		return sqlite.SQLITE_OK, nil
@@ -52,16 +57,8 @@ func register() {
 }
 
 func setInitialConfig() error {
-	pluginName := fmt.Sprintf("steampipe-plugin-%s", pluginAlias)
-
-	c := &proto.ConnectionConfig{
-		Connection:      pluginAlias,
-		Plugin:          pluginName,
-		PluginShortName: pluginAlias,
-		PluginInstance:  pluginName,
-		// set a blank config, so that we can fetch the schema from the plugin
-		Config: "",
-	}
+	// set a blank config, so that we can fetch the schema from the plugin
+	c := newConnectionConfig(defaultConnectionName(), "")
 
 	cs := []*proto.ConnectionConfig{c}
 	req := &proto.SetAllConnectionConfigsRequest{
