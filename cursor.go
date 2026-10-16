@@ -14,6 +14,8 @@ import (
 // PluginCursor implements the sqlite/virtual_table.Cursor interface.
 // It is used to allow the SQLite core to interact with the virtual table and retrieve rows.
 type PluginCursor struct {
+	// ctx is the parent context; each Filter call derives its own context from it
+	ctx          context.Context
 	cursorCancel context.CancelFunc
 	currentRow   int64
 	stream       *anywhere.LocalPluginStream
@@ -23,10 +25,11 @@ type PluginCursor struct {
 
 // NewPluginCursor creates a new cursor for a plugin table.
 func NewPluginCursor(ctx context.Context, table *PluginTable) *PluginCursor {
-	_, cancel := context.WithCancel(ctx)
+	streamCtx, cancel := context.WithCancel(ctx)
 	return &PluginCursor{
+		ctx:          ctx,
 		table:        table,
-		stream:       anywhere.NewLocalPluginStream(ctx),
+		stream:       anywhere.NewLocalPluginStream(streamCtx),
 		cursorCancel: cancel,
 		currentRow:   0,
 		currentItem:  make(map[string]*proto.Column),
@@ -51,6 +54,16 @@ func (p *PluginCursor) Filter(indexNumber int, indexString string, values ...sql
 	}
 
 	execRequest := p.buildExecuteRequest(pluginAlias, queryCtx, qualMap)
+
+	// SQLite calls xFilter again on the same cursor for every value of an
+	// IN (...) list on a key column and for every outer row on the inner side
+	// of a join. Each execute ends its stream with end-of-rows markers (and an
+	// error closes the stream for good), so a stream must never be reused:
+	// cancel the previous execute and give this one a fresh stream.
+	p.cursorCancel()
+	streamCtx, cancel := context.WithCancel(p.ctx)
+	p.cursorCancel = cancel
+	p.stream = anywhere.NewLocalPluginStream(streamCtx)
 
 	pluginServer.CallExecuteAsync(execRequest, p.stream)
 
