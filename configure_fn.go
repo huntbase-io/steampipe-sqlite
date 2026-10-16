@@ -21,98 +21,68 @@ func NewConfigureFn(api *sqlite.ExtensionApi) *ConfigureFn {
 	}
 }
 
-func (m *ConfigureFn) Args() int           { return 1 }
+// Args is -1: the function takes either (config) for the default connection
+// or (connection_name, config) for a named connection.
+func (m *ConfigureFn) Args() int           { return -1 }
 func (m *ConfigureFn) Deterministic() bool { return true }
 func (m *ConfigureFn) Apply(ctx *sqlite.Context, values ...sqlite.Value) {
 	log.Println("[TRACE] ConfigureFn.Apply start")
 	defer log.Println("[TRACE] ConfigureFn.Apply end")
 
-	var config string
+	var name, config string
 	var err error
-	log.Println("[TRACE] getting config")
-	if config, err = m.getConfig(values...); err != nil {
-		ctx.ResultError(err)
-		return
+	switch len(values) {
+	case 1:
+		name = defaultConnectionName()
+		config, err = textArg(values[0])
+	case 2:
+		if name, err = textArg(values[0]); err == nil {
+			if err = validateConnectionName(name); err == nil {
+				config, err = textArg(values[1])
+			}
+		}
+	default:
+		err = errors.New("expected (config) or (connection_name, config)")
 	}
-
-	// Set Connection Config
-	err = m.setConnectionConfig(config)
 	if err != nil {
 		ctx.ResultError(err)
 		return
 	}
+
+	if err := m.setConnectionConfig(name, config); err != nil {
+		ctx.ResultError(err)
+		return
+	}
 }
 
-// getConfig returns the config string from the first argument
-func (m *ConfigureFn) getConfig(values ...sqlite.Value) (config string, err error) {
-	log.Println("[TRACE] ConfigureFn.getConfig start")
-	defer log.Println("[TRACE] ConfigureFn.getConfig end")
-
-	if len(values) > 1 {
-		return "", errors.New("expected a single argument")
-	}
-
-	switch {
-	case values[0].Type() == sqlite.SQLITE_TEXT:
-		config = values[0].Text()
-	case values[0].Type() == sqlite.SQLITE_BLOB:
-		config = string(values[0].Blob())
+// textArg returns a TEXT or BLOB argument as a string
+func textArg(v sqlite.Value) (string, error) {
+	switch v.Type() {
+	case sqlite.SQLITE_TEXT:
+		return v.Text(), nil
+	case sqlite.SQLITE_BLOB:
+		return string(v.Blob()), nil
 	default:
-		return "", (errors.New("expected a TEXT or BLOB argument"))
+		return "", errors.New("expected a TEXT or BLOB argument")
 	}
-	return config, nil
 }
 
-// setConnectionConfig sets the connection config for the plugin
-func (m *ConfigureFn) setConnectionConfig(config string) error {
+// setConnectionConfig sets the config of the default or a named connection
+func (m *ConfigureFn) setConnectionConfig(name, config string) error {
 	log.Println("[TRACE] ConfigureFn.setConnectionConfig start")
 	defer log.Println("[TRACE] ConfigureFn.setConnectionConfig end")
 
-	pluginName := fmt.Sprintf("steampipe-plugin-%s", pluginAlias)
-
-	c := &proto.ConnectionConfig{
-		Connection:      pluginAlias,
-		Plugin:          pluginName,
-		PluginShortName: pluginAlias,
-		Config:          config,
-		PluginInstance:  pluginName,
-	}
-
-	if currentSchema != nil {
-		log.Println("[TRACE] ConfigureFn.setConnectionConfig: updating connection config")
-		// send an update request to the plugin server
-		cs := []*proto.ConnectionConfig{c}
-		req := &proto.UpdateConnectionConfigsRequest{Changed: cs}
-		_, err := pluginServer.UpdateConnectionConfigs(req)
-		if err != nil {
-			return err
-		}
-	} else {
-		log.Println("[TRACE] ConfigureFn.setConnectionConfig: setting connection config")
-		// set the config in the plugin server
-		cs := []*proto.ConnectionConfig{c}
-		req := &proto.SetAllConnectionConfigsRequest{
-			Configs:        cs,
-			MaxCacheSizeMb: 32,
-		}
-		_, err := pluginServer.SetAllConnectionConfigs(req)
-		if err != nil {
-			return err
-		}
-	}
-
-	// fetch the schema
-	// we cannot use the global currentSchema variable here
-	// because it may not have been loaded yet at all
-	schema, err := getSchema()
+	logConnection("configuring", name)
+	schema, err := upsertConnection(name, config)
 	if err != nil {
 		return err
 	}
 
 	log.Println("[TRACE] ConfigureFn.setConnectionConfig: schema fetched successfully")
 
-	// we should also trigger a schema refresh after this call for dynamic backends
-	if SCHEMA_MODE_DYNAMIC.Equals(schema.Mode) {
+	// the tables of the default connection are the eponymous tables: for
+	// dynamic backends, refresh them after a config change
+	if name == defaultConnectionName() && SCHEMA_MODE_DYNAMIC.Equals(schema.Mode) {
 		// drop the existing tables - if they have been created
 		if err := m.dropCurrent(); err != nil {
 			return err
@@ -125,7 +95,7 @@ func (m *ConfigureFn) setConnectionConfig(config string) error {
 		currentSchema = schema
 	}
 
-	return err
+	return nil
 }
 
 func (m *ConfigureFn) dropCurrent() error {
@@ -153,13 +123,7 @@ func getSchema() (*proto.Schema, error) {
 	log.Println("[TRACE] getSchema start")
 	defer log.Println("[TRACE] getSchema end")
 
-	// Get Plugin Schema
-	sRequest := &proto.GetSchemaRequest{Connection: pluginAlias}
-	s, err := pluginServer.GetSchema(sRequest)
-	if err != nil {
-		return nil, err
-	}
-	return s.GetSchema(), nil
+	return getSchemaForConnection(defaultConnectionName())
 }
 
 // setupTables sets up the schema tables for the plugin
