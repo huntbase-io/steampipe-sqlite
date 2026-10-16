@@ -26,6 +26,11 @@ func register() {
 			return sqlite.SQLITE_ERROR, err
 		}
 
+		// Huntbase: report which build (and which fixes) this extension carries.
+		if err := registerHuntbaseBuildFn(api); err != nil {
+			return sqlite.SQLITE_ERROR, err
+		}
+
 		if SCHEMA_MODE_STATIC.Equals(pluginServer.GetSchemaMode()) {
 			// if the target plugin has a static schema, then the list of tables and columns
 			// is also static. let's just set it up with a blank config and setup the tables
