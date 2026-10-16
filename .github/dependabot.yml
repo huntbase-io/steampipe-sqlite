@@ -20,6 +20,6 @@ updates:
     pull-request-branch-name:
       separator: "-"
     assignees:
-      - "binaek"
+      - "rakeshrm"
     labels:
       - "dependencies"

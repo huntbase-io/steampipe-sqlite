@@ -14,7 +14,7 @@ on:
       - 'huntbase-r*'
   pull_request:
     branches:
-      - huntbase
+      - dev
   workflow_dispatch:
 
 concurrency:
