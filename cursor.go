@@ -53,7 +53,7 @@ func (p *PluginCursor) Filter(indexNumber int, indexString string, values ...sql
 		return err
 	}
 
-	execRequest := p.buildExecuteRequest(pluginAlias, queryCtx, qualMap)
+	execRequest := p.buildExecuteRequest(p.table.connection, queryCtx, qualMap)
 
 	// SQLite calls xFilter again on the same cursor for every value of an
 	// IN (...) list on a key column and for every outer row on the inner side

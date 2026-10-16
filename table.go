@@ -50,6 +50,8 @@ type PluginTable struct {
 	name        string
 	tableSchema *proto.TableSchema
 	planNumber  int64
+	// connection is the plugin connection this table reads
+	connection string
 }
 
 func (p *PluginTable) getLimit(info *sqlite.IndexInfoInput) (limit *QueryLimit) {
