@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: huntbase
+          ref: dev
           fetch-depth: 0
           persist-credentials: false
       - name: Check plugins and upstream
@@ -56,7 +56,7 @@ jobs:
           UPDATES: ${{ steps.check.outputs.updates }}
         run: |
           set -euo pipefail
-          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$BRANCH" --base huntbase --state open --json number -q '.[0].number // empty')
+          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$BRANCH" --base dev --state open --json number -q '.[0].number // empty')
           if [[ "$CHANGED" != true ]]; then
             if [[ -n "$pr" ]]; then
               gh pr close "$pr" -R "$GITHUB_REPOSITORY" --delete-branch \
@@ -83,7 +83,7 @@ jobs:
           fi
 
           if [[ -z "$pr" ]]; then
-            gh pr create -R "$GITHUB_REPOSITORY" --base huntbase --head "$BRANCH" --title "$TITLE" --body-file pr.md
+            gh pr create -R "$GITHUB_REPOSITORY" --base dev --head "$BRANCH" --title "$TITLE" --body-file pr.md
           else
             jq -n --rawfile body pr.md --arg title "$TITLE" '{title: $title, body: $body}' \
               | gh api -X PATCH "repos/$GITHUB_REPOSITORY/pulls/$pr" --input - >/dev/null

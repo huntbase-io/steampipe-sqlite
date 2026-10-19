@@ -7,7 +7,7 @@ name: Huntbase release
 #   SDK v6 plugins: this commit.  SDK v5 plugins: the huntbase-sdk-v5 commit in huntbase/V5_REF.
 #
 # Releases come from:
-#   - a merge to `huntbase` that changes huntbase/BUILD_VERSION (the weekly
+#   - a merge to `dev` that changes huntbase/BUILD_VERSION (the weekly
 #     plugin-update PR bumps it): tag huntbase-<BUILD_VERSION> is created here;
 #   - pushing a tag huntbase-<BUILD_VERSION>, or huntbase-<BUILD_VERSION>-<suffix>
 #     for a test (published as a prerelease, which the rollout ignores).
@@ -21,7 +21,7 @@ on:
     tags:
       - 'huntbase-r*'
     branches:
-      - huntbase
+      - dev
     paths:
       - 'huntbase/BUILD_VERSION'
   pull_request:
