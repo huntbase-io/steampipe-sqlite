@@ -23,7 +23,7 @@ People merge every PR. No workflow merges anything or deploys by itself.
    commits we lack and whether upstream now has its own fresh-stream-per-Filter fix. That is a warning on
    the run; if it lands, consider dropping our cursor fix. No updates means no PR (an open one is closed). Because GITHUB_TOKEN pushes
    don't start workflows, it starts the release build on the PR branch with a dispatch (no publish).
-2. **Release.** A push to `huntbase` that changes `BUILD_VERSION` builds every plugin, then
+2. **Release.** A push to `dev` that changes `BUILD_VERSION` builds every plugin, then
    `huntbase/smoke_test.py` checks the exact archives: `SHA256SUMS`, the manifest against `plugins.txt`,
    every extension loads and `huntbase_build_<plugin>()` reports this build with `refilter`, and IN-list
    and join queries on the terraform extension (local `.tf` files, no network) return every row. Only
