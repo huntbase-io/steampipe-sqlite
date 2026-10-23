@@ -8,7 +8,9 @@ name: Huntbase release
 #
 # Releases come from:
 #   - a merge to `dev` that changes huntbase/BUILD_VERSION (the weekly
-#     plugin-update PR bumps it): tag huntbase-<BUILD_VERSION> is created here;
+#     plugin-update PR bumps it): a DRAFT release huntbase-<BUILD_VERSION> is
+#     created here. The "Protect release tags" ruleset lets only admins create
+#     huntbase-r* tags, so an admin publishes the draft, which creates the tag;
 #   - pushing a tag huntbase-<BUILD_VERSION>, or huntbase-<BUILD_VERSION>-<suffix>
 #     for a test (published as a prerelease, which the rollout ignores).
 # hb-backend's steampipe-rollout workflow picks up each new full release. See huntbase/ROLLOUT.md.
@@ -232,12 +234,25 @@ jobs:
             echo
             cat meta/smoke-test.md
           } > notes.md
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
-            target=(--verify-tag)
-          else
-            target=(--target "$GITHUB_SHA")
-          fi
           flags=()
           [[ "$PRERELEASE" == true ]] && flags+=(--prerelease --latest=false)
-          gh release create "$TAG" dist/*.tar.gz dist/manifest.json dist/SHA256SUMS meta/smoke-test.json \
-            -R "$GITHUB_REPOSITORY" "${target[@]}" "${flags[@]}" --title "$TAG" --notes-file notes.md
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            # A maintainer pushed the tag: publish the release on it.
+            gh release create "$TAG" dist/*.tar.gz dist/manifest.json dist/SHA256SUMS meta/smoke-test.json \
+              -R "$GITHUB_REPOSITORY" --verify-tag "${flags[@]}" --title "$TAG" --notes-file notes.md
+          else
+            # Merge to dev: the "Protect release tags" ruleset lets only admins
+            # create huntbase-r* tags, so GITHUB_TOKEN can't publish (publishing
+            # creates the tag). Attach everything to a draft on this commit; an
+            # admin publishes it, which creates the tag. The rollout ignores drafts.
+            gh release create "$TAG" dist/*.tar.gz dist/manifest.json dist/SHA256SUMS meta/smoke-test.json \
+              -R "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" "${flags[@]}" --title "$TAG" --notes-file notes.md
+            {
+              echo "### Draft release $TAG is ready"
+              echo
+              echo "Built and smoke-tested from \`$GITHUB_SHA\`. A repository admin must publish it"
+              echo "(Releases → $TAG → Edit → Publish release); that creates the tag \`$TAG\`."
+              echo "hb-backend's rollout picks it up within the hour."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Draft release $TAG created. A repository admin must publish it (protected tag)."
+          fi
