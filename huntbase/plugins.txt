@@ -18,6 +18,7 @@ buildkite@v1.2.0
 circleci@v1.2.0
 cloudflare@v1.6.1
 consul@v1.2.0
+huntbase-io/criminalip@v0.1.0
 crowdstrike@v1.2.1
 crtsh@v1.2.0
 databricks@v1.2.0
