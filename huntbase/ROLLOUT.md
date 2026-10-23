@@ -8,7 +8,7 @@ Background: hb-backend#2573 (the cursor fix), hb-backend#2602 (pins and `stage-b
 | Step | Where | Trigger | Writes |
 |---|---|---|---|
 | 1. Update check | this repo, `huntbase-update-check.yml` | weekly (Mon 06:17 UTC) or Run workflow | one rolling PR from `bot/plugin-updates`: `plugins.txt` + `BUILD_VERSION` |
-| 2. Build, smoke test, release | this repo, `huntbase-release.yml` | merging that PR (`BUILD_VERSION` changed) | release `huntbase-rN` |
+| 2. Build, smoke test, release | this repo, `huntbase-release.yml` | merging that PR (`BUILD_VERSION` changed), then **an admin publishes the draft** | release `huntbase-rN` |
 | 3. Stage staging | hb-backend, `steampipe-rollout.yml` | hourly check for a new release | `gs://huntbase-staging-shared-libs/steampipe-sqlite-huntbase-rN/` |
 | 4. PRs | hb-backend, `steampipe-rollout.yml` | same run | hb-backend PR (pins), helm-charts PR (`values-staging.yaml`) |
 | 5. Production | hb-backend, `steampipe-rollout.yml` | **Run workflow, target `production`, plus approval** | `gs://huntbase-production-shared-libs/...`, helm-charts PR (`values-production.yaml`) |
@@ -28,7 +28,11 @@ People merge every PR. No workflow merges anything or deploys by itself.
    every extension loads and `huntbase_build_<plugin>()` reports this build with `refilter`, and IN-list
    and join queries on the terraform extension (local `.tf` files, no network) return every row. Only
    then is `huntbase-rN` created, with the smoke-test report in its notes and as `smoke-test.json`.
-   Existing tags are never reused. Pushing a tag `huntbase-rN-<suffix>` makes a test prerelease, which
+   It is created as a **draft**: the "Protect release tags" ruleset lets only repository admins create
+   `huntbase-r*` tags, and publishing a release creates its tag, so `GITHUB_TOKEN` can't publish it.
+   An admin opens the draft (Releases → `huntbase-rN` → Edit) and clicks **Publish release**; drafts
+   are invisible to the rollout until then. Alternatively an admin pushes the tag
+   `huntbase-rN` on the merge commit, which rebuilds and publishes directly. Existing tags are never reused. Pushing a tag `huntbase-rN-<suffix>` makes a test prerelease, which
    the rollout ignores.
 3. **Staging (hb-backend).** Within the hour, `steampipe-rollout.yml` sees a release newer than
    hb-backend's `HUNTBASE_RELEASE`, re-runs the smoke test on the published assets (no credentials in that job), then
