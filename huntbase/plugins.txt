@@ -7,9 +7,9 @@ alicloud@v1.6.0
 ansible@v1.2.0
 huntbase-io/anthropic@v0.1.1
 auth0@v1.1.1
-aws@v1.34.0
+aws@v1.34.1
 awscfn@v1.1.1
-azure@v1.16.0
+azure@v1.17.0
 azuread@v1.9.0
 azuredevops@v1.2.0
 bigfix@v1.0.1
@@ -19,7 +19,7 @@ circleci@v1.2.0
 cloudflare@v1.6.1
 consul@v1.2.0
 huntbase-io/criminalip@v0.1.0
-crowdstrike@v1.2.1
+crowdstrike@v1.3.0
 crtsh@v1.2.0
 databricks@v1.2.0
 datadog@v1.2.2
@@ -30,8 +30,8 @@ env0@v1.2.0
 equinix@v1.2.0
 fastly@v1.2.0
 fly@v1.2.0
-gcp@v1.13.1
-github@v1.11.0
+gcp@v1.14.0
+github@v1.11.1
 godaddy@v1.2.0
 googledirectory@v1.2.0
 googleworkspace@v1.3.1
@@ -55,7 +55,7 @@ mongodbatlas@v1.2.0
 namecheap@v1.2.0
 newrelic@v1.2.0
 nomad@v1.2.0
-oci@v1.2.1
+oci@v1.3.0
 okta@v1.2.1
 onepassword@v1.2.0
 openai@v1.2.0
